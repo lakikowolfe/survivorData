@@ -1,0 +1,366 @@
+---
+title: "Using Rvest to scrape data from the Surivor Wiki"
+author: "Lauren Wolfe"
+date: "4/9/2021"
+output: 
+  html_document:
+    theme: cosmo
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+## Set up
+
+I recently came across the [`survivoR`](https://github.com/doehm/survivoR) data package on Twitter. I've been watching a ton of Survivor this quarentine so I was stoked that someone had put the time and effort in to collect all this data.
+
+As I've been binging through the 40 seasons of Survivor, I noticed that there are quite a few challenges that reoccur throughout the seasons. I found myself classifying them in my head. Some favor brute strength, others balence and body control. I wondered if there was a way to visualize the winners and look for common themes, but when I checked the `SurvivoR` data package the info on recurring challenges was not included!
+
+This didn't deter me. I read the README from the `survivoR` repo and the maintainer had mentioned that they'd sourced most of their data from Wikipedia. I had found myself on the [Survivor Fandom Wiki](https://survivor.fandom.com/wiki/Main_Page) early on in my Survivor watching career to learn more about the game mechanics. There is a _ton_ of information on this site and lucky for me there is a [catelogue of recurring challenges](https://survivor.fandom.com/wiki/Category:Recurring_Challenges)!
+
+I opened an [issue](https://github.com/doehm/survivoR/issues/4) in the package GitHub page and offered to collect the data myself! Based on discussion with the package maintainer, I will look to pull together the following for each recurring episode:
+
+  - Challenge name
+  - Episodes names that the challenge occured in
+  - Seasons that the challenge occured in
+  - Winner(s) of the challenge
+  - Challenge type (immunity vs reward)
+  - Day that the challenge occured on
+  - Challenge description
+
+## Load libraries
+
+```{r}
+# pull and parse html
+library(rvest)
+# munge
+library(tidyverse)
+# table
+library(knitr)
+library(kableExtra)
+```
+
+## Read in HTML from the main 'Recurring Challenges' page
+
+I followed the [Web scraping 101](https://rvest.tidyverse.org/articles/rvest.html) to get familiar with the package. First step, let's read in some HTML. I'm going to start with the Recurring Challenge page. The goal is to pull the names of each challenge listed on the page.
+
+```{r}
+survivor <- read_html("https://survivor.fandom.com/wiki/Category:Recurring_Challenges")
+```
+
+## Pull out challenge names
+
+Next I used some `rvest` functions to quickly and easily parse the HTML. I used [selectorGadget](https://rvest.tidyverse.org/articles/selectorgadget.html) and inspected the webpage to determine which HTML elements to target. This step took _a lot_ of trial and error that you don't see in this document. I had to brush up on my HTML knowledge quite a bit.
+
+```{r}
+# save challenge names by pulling out the title attribute
+names <- survivor %>%
+  html_elements(".category-page__member-link") %>%
+  html_attr("title")
+
+# save href by pulling out the href attribute
+href <- survivor %>%
+  html_elements(".category-page__member-link") %>%
+  html_attr("href")
+
+# keep info as a dataframe
+challengeData <- tibble(name = names, href = href)
+```
+
+Here's what the data looks like:
+
+```{r}
+challengeData %>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "500px", height = "200px")
+```
+
+
+I pulled the title and href attributes. Title corrosponds to the challenge name and href is a portion of the url. We'll use this information later to traverse deeper into the wiki.
+
+## Dynamically generate URLs to each challenge page
+
+Rather than code each individual url to a challenge page by hand I will use the `challengeData$href` to programmatically create the. To do this I have to use what I know about how URLs are created and click around a bit to test my knowledge. Here are the basic steps.
+
+1. Find the [base URL](https://webtech.training.oregonstate.edu/faq/what-base-url#:~:text=A%20base%20URL%20is%2C%20basically,known%20as%20a%20URL%20path.).
+
+  In this case the base URL is `https:://survivor.fandom.com/`. I figured that out by clicking around the site and seeing what stayed consistant!
+    
+2. Use the href to and the base URL to dynamically create urls to each individual recurring challenge webpage. Let's take a look at a few different challenge pages:
+  
+  - https://survivor.fandom.com/wiki/Race_to_Shore
+  - https://survivor.fandom.com/wiki/Quest_for_Fire
+  - https://survivor.fandom.com/wiki/Balancing_Point
+    
+Between the base URL and the href we've pretty much got everything covered for a full URL! 
+  
+I'll use the `href` column from `challengeData` and the base URL.
+
+```{r}
+baseUrl <- "https://survivor.fandom.com/"
+
+challengeData$url <- paste0(baseUrl, challengeData$href)
+
+challengeData %>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "1000px", height = "600px")
+```
+
+## Figure out what data I want to extract from each challenge page
+
+Ok, so now that I know _how_ I'm going to get to each challenge page I need to decide what data I want to grab. To figure this out I scrolled around the challenge pages a bit to get an idea of what's there. The data I'm looking for is located in the table under the Winners header. There also is some interesting information on the sidebar, but I'll leave that for now.
+
+Once again I used selectorGadget and inspected the web page to identify the CSS selectors I wanted to target. In this case, I selected for the `table` element.
+
+Before pulling data for all the challenges, let's start with just one. I isolated the data for the challenge called [Balencing Point](https://survivor.fandom.com/wiki/Balancing_Point).
+
+```{r}
+balancingPointData <- challengeData[grepl("Balancing Point", challengeData$name),]
+
+# paste together href and base url to create the balancing point challenge page url
+url <- paste0(baseUrl, balancingPointData$href)
+
+# read the html
+balancingPointHtml <- read_html(url)
+
+# isolate the table
+bpList <- balancingPointHtml %>%
+  html_elements("table") %>%
+  html_table()
+```
+
+Let's take a look at what we've got:
+
+## bpList {.tabset}
+
+### First dataframe
+
+```{r}
+bpList[[1]] %>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "800px", height = "200px")
+```
+
+### Second dataframe
+
+```{r}
+bpList[[2]] %>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "800px", height = "200px")
+```
+
+##
+
+## Taking a look at the list of dataframes
+
+It looks like the code above returned a list of dataframes.
+
+Luckily, the first dataframe contains everything I need (Season, episode, and winners of each challenge)! The second dataframe is just a character string of all the challenge names. I didn't really mean to capture the second dataframe, but that's just the messy nature of webscraping for you! I'll isolate the first dataframe and discard the rest.
+
+```{r}
+bpData <- bpList[[1]]
+```
+
+## Wrangle season & episode text
+
+If you look closely at the `Episode` column in `bpData` you'll notice that the column contains both the season name and the episode name. 
+Since the episode column contains both the season name and the episode I need to clean that up. I'll do this in two steps:
+
+1. Split the string on the first `"`
+2. Remove the remaining `"` at the end of the string.
+
+```{r}
+sznEpi <- as.data.frame(str_split(bpData$Episode, "\"", 2, simplify = TRUE))
+names(sznEpi) <- c("season", "episode")
+
+# There's still the closing quote at the end of each episode string, remove last character
+ sznEpi$episode <- gsub(".{1}$", "", sznEpi$episode)
+ 
+# nice and clean
+ sznEpi %>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped"))
+```
+
+Now I'll merge the cleaned season and episode titles with the winners. I'll remove the old episode column and change the column names to lowercase / snakecase
+
+```{r}
+# bind columns back together, remove the first column from bpData
+bpData <- bind_cols(sznEpi, bpData[,-1])
+# change the last two column names
+colnames(bpData)[3:4] <- c("challenge_type", "winners")
+
+# lets see it!
+ bpData %>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped"))
+```
+
+## Getting ALL the data
+
+Ok, so now that I've got a rough idea of how to wrangle a single dataframe of challenge data it's time to work with the whole thing.
+
+### QC on the URLs
+
+Remember those URL's I made earlier? I'm going to use `challengeData$url` to pull information for each challenge.
+```{r}
+# Use the RCurl functin to check that all the urls work, 
+challengeData$urlExist <- RCurl::url.exists(challengeData$url, header = FALSE)
+
+table(challengeData$urlExist)
+```
+
+Looks like all of our URLs work! Success! 
+
+### Pull it!
+
+Now all the pieces are in place to iterate over `challengeData$url`. I'm going to use lapply to do this. For each URL, I read in the HTML using `read_html()` and pull out the table element. I expect for each challenge to return two dataframe each. The first one should contain all the useful info I need.
+
+```{r}
+challengeList <- lapply(challengeData$url, function(x) {
+  html <- read_html(x)
+  tst <- html %>%
+    html_elements("table") %>%
+    html_table()
+  })
+
+# add names to challengeList
+names(challengeList) <- challengeData$name
+
+# view a summary of the data
+glimpse(challengeList)
+```
+
+I didn't really want to print all that, but there's some really good information in here. The very first thing I noticed was that every single object in this list was a list of two tibbles except for one. There's a single list of 8 dataframes! 
+
+The next thing I noticed was that for all the cases (including the one with 8 dataframes) there was one tibble with multiple columns and rows and the rest were 1 by 1 tibbles. This aligns with what I saw returned before, one tibble with a long character string of challenge names and another tibble with the actual data.
+
+## Investigating the list of 8 dataframes
+
+The next thing I'm going to do is see what is up with the list of 8 dataframes. I viewed the `challengeDataList` and found the object I was looking for. It's the 49th in the list.
+
+```{r}
+challengeList[[49]]
+```
+
+Lot's of really weird stuff going on here. Let's take a look at what challenge this is for
+
+```{r}
+challengeData[49,]
+```
+
+Ok! This makes a ton of sense. This is for the duel challenge page which has a different HTML schema than the other challenges. I'll just remove it from the list!
+
+```{r}
+challengeList <- challengeList[-49]
+```
+
+After eyeballing the rest of them, I'm 90% sure all the info we want is in the first dataframe for all 194 remaining objects in `challengeList`. If this was like....a cancer research project I would want to be 100% sure, but for this I think we're ok.
+
+Now I'm going to isolate the first dataframe in each list within the list!
+
+```{r}
+# use purrr::map to isolate first df
+challengeList <- map(challengeList, 1)
+```
+
+### Exporing the list of challenge data
+
+Just looking at the list by eye in `View()` I can see that most of the dataframes have 3 variables. This aligns with what I saw in the Balancing Point data, Episode, Challenge Type, and Winner columns. But there are also quite a few that have more than three columns! I want to see how much variation there is in the list to make it easier to iterate over later.
+
+```{r}
+# what are the column names for each list
+columnNamesList <- lapply(challengeList, names)
+# use map_dfr to handle a list of vectors of different lengths 
+columnNamesDf <- map_dfr(columnNamesList, ~as_data_frame(t(.)))
+# make some column headers for the new dataframe of column names
+colnames(columnNamesDf) <- paste0("column_", seq(1:length(columnNamesDf[1,])))
+# add back in the challenge name for clarity
+# remove #49
+challengeNames <- challengeData$name[-49]
+columnNamesDf$challenge <- challengeNames
+columnNamesDf <- select(columnNamesDf, challenge, everything())
+# Take a peek
+columnNamesDf %>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "800px", height = "300px")
+```
+
+I scrolled around this dataframe a bit to get a few of what the columns the list of dataframes contains. For the most part extra columns are extra `Winners` columns. I believe this corrosponds with challenges that have multiple winners. 
+
+First I want to work with the dataframes that are very standard. This will allow me to work with a bulk of the dataframes at once and then go back and figure out what to do with the wonky ones.
+
+I'm going to use the `columnNamesDf` to find the index of the standard dataframes.
+```{r}
+
+# quantify the number of columns from each dataframe that are not NA
+# Here I'll use rowSums to quantify the number of TRUEs from !is.na for each column. Each TRUE = +1.
+
+columnNamesDf$numColNames <- rowSums(!is.na(columnNamesDf))
+
+# I am looking for dataframes that have the columns "Episode", "Challenge Type" and a single "Winner" column. I also have to take into account that I added a column for each row with the challenge name.
+
+# So I am looking for rows that add up to 4 (3 columns + name column)
+
+# Here I am filtering the dataframe `columnNamesDf` for rows where `numColNames` == 4.
+
+columnNamesDf %>%
+  filter(numColNames == 4) %>%
+  select(numColNames, everything()) %>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "1000px", height = "500px")
+```
+
+Again, I scrolled a bit to do some QC and get an idea of what I'm working with. Now I want to subset the list of dataframes to grab just these dataframes. I'll create a vector of TRUE/FALSE for is numColNames == 4 and use that to subset the list.
+
+```{r}
+columnNamesDf$isStandard <- columnNamesDf$numColNames == 4
+
+head(columnNamesDf)
+```
+
+Now I'll subset the list using the logical vector `isStandard` in `columnNamesDf`.
+
+```{r}
+standardChallengeDataList <- challengeList[columnNamesDf$isStandard]
+```
+
+I viewed the list for a bit and this looks good! The list has 159 dataframes within it. All of these dataframes have only 3 columns. The only difference amongst the dataframes is that some dataframes have the third column labeled `Winner` and others have the column labeled `Winners`. I think this is ok. First, I'll bind the rows together and then I'll figure out what to do with the two columns after looking a little more at the values they hold.
+
+```{r}
+# bind the rows using the challenge name as the ID
+standardChallengeData <- bind_rows(standardChallengeDataList, .id = "name")
+# peek
+standardChallengeData %>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "800px", height = "500px")
+```
+
+I think this is a really good place to be in! The data isn't completely clean. You'll notice the Episode column hasn't been cleaned like I did in the case study above, there are multiple Winner columns, and tribes need to be mapped to individual winners. I will wait until I have all the episodes data into a single dataframe to fix these things rather than do it multiple times throughout the process. So now the goal is to coerce the weirder dataframes in the list to fit into this one!
+
+Now I want to manage the more wonky datasets. Lets see where to focus work first by visualizing the number of columns in each dataframe.
+
+```{r}
+ggplot(columnNamesDf, aes(x = numColNames)) +
+  geom_bar() +
+  scale_x_continuous(breaks = function(x) unique(floor(pretty(seq(0, (max(x) + 1) * 1.1))))) +
+  labs(x = "Number of columns", y = "Number of tables") +
+  theme_minimal()
+```
+
+Based on this table I can see that the next area of focus should be tables with 4 columns.
+
+```{r}
+columnNamesDf$fourCol <- columnNamesDf$numColNames == 5
+fourColDataList <- challengeList[columnNamesDf$fourCol]
+
+```
